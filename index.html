@@ -44,7 +44,7 @@
 
     /* ── Weather dashboard (right half) ── */
     #weather-panel {
-      width: 340px;
+      width: 50%;
       height: 100%;
       background: linear-gradient(160deg, #e8f5e9 0%, #f1f8e9 100%);
       border-left: 3px solid #a5d6a7;
@@ -57,34 +57,36 @@
     }
 
     .weather-title {
-      font-size: 1rem;
+      font-size: 3rem;
       color: #558b2f;
-      letter-spacing: 0.12em;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
       font-weight: 700;
+      text-align: center;
+      line-height: 1.2;
     }
 
     .city-name {
-      font-size: 1.5rem;
+      font-size: 4.5rem;
       color: #2e7d32;
       font-weight: 700;
       text-align: center;
     }
 
     .weather-icon {
-      font-size: 4.5rem;
+      font-size: 13.5rem;
       line-height: 1;
     }
 
     .temperature {
-      font-size: 3.5rem;
+      font-size: 10.5rem;
       font-weight: 800;
       color: #1b5e20;
       line-height: 1;
     }
 
     .description {
-      font-size: 1.1rem;
+      font-size: 3.3rem;
       color: #388e3c;
       text-align: center;
       text-transform: capitalize;
@@ -114,7 +116,7 @@
     }
 
     .stat-label {
-      font-size: 0.65rem;
+      font-size: 1.95rem;
       color: #81c784;
       text-transform: uppercase;
       letter-spacing: 0.08em;
@@ -122,19 +124,19 @@
     }
 
     .stat-value {
-      font-size: 1rem;
+      font-size: 3rem;
       color: #2e7d32;
       font-weight: 700;
     }
 
     .last-updated {
-      font-size: 0.65rem;
+      font-size: 1.95rem;
       color: #aaa;
       text-align: center;
     }
 
     .weather-error {
-      font-size: 0.85rem;
+      font-size: 2.55rem;
       color: #c62828;
       text-align: center;
     }
@@ -150,7 +152,7 @@
 
     <!-- Weather -->
     <div id="weather-panel">
-      <div class="weather-title">🌿 Garden Report</div>
+      <div class="weather-title">🌿 Plantimus Weather Station</div>
       <div class="city-name" id="w-city">—</div>
       <div class="weather-icon" id="w-icon">🌱</div>
       <div class="temperature" id="w-temp">—</div>
