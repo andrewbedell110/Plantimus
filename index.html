@@ -16,15 +16,23 @@
       height: 100%;
       background: white;
       overflow: hidden;
+      font-family: 'Segoe UI', sans-serif;
     }
 
-    #container {
+    #layout {
       width: 100%;
       height: 100%;
       display: flex;
       align-items: center;
+    }
+
+    /* ── Plant (left half) ── */
+    #plant-panel {
+      flex: 1;
+      height: 100%;
+      display: flex;
+      align-items: center;
       justify-content: center;
-      transform: rotate(0deg);
       cursor: pointer;
     }
 
@@ -33,41 +41,225 @@
       max-height: 100%;
       object-fit: contain;
     }
+
+    /* ── Weather dashboard (right half) ── */
+    #weather-panel {
+      width: 340px;
+      height: 100%;
+      background: linear-gradient(160deg, #e8f5e9 0%, #f1f8e9 100%);
+      border-left: 3px solid #a5d6a7;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 28px 24px;
+      gap: 18px;
+    }
+
+    .weather-title {
+      font-size: 1rem;
+      color: #558b2f;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+
+    .city-name {
+      font-size: 1.5rem;
+      color: #2e7d32;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .weather-icon {
+      font-size: 4.5rem;
+      line-height: 1;
+    }
+
+    .temperature {
+      font-size: 3.5rem;
+      font-weight: 800;
+      color: #1b5e20;
+      line-height: 1;
+    }
+
+    .description {
+      font-size: 1.1rem;
+      color: #388e3c;
+      text-align: center;
+      text-transform: capitalize;
+    }
+
+    .divider {
+      width: 80%;
+      border: none;
+      border-top: 1px solid #c8e6c9;
+    }
+
+    .stat-grid {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .stat {
+      background: rgba(255,255,255,0.65);
+      border-radius: 12px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .stat-label {
+      font-size: 0.65rem;
+      color: #81c784;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 600;
+    }
+
+    .stat-value {
+      font-size: 1rem;
+      color: #2e7d32;
+      font-weight: 700;
+    }
+
+    .last-updated {
+      font-size: 0.65rem;
+      color: #aaa;
+      text-align: center;
+    }
+
+    .weather-error {
+      font-size: 0.85rem;
+      color: #c62828;
+      text-align: center;
+    }
   </style>
 </head>
 <body>
-  <div id="container">
-    <img id="plant" src="" alt="Plantimus" />
+  <div id="layout">
+
+    <!-- Plant -->
+    <div id="plant-panel">
+      <img id="plant" src="" alt="Plantimus" />
+    </div>
+
+    <!-- Weather -->
+    <div id="weather-panel">
+      <div class="weather-title">🌿 Garden Report</div>
+      <div class="city-name" id="w-city">—</div>
+      <div class="weather-icon" id="w-icon">🌱</div>
+      <div class="temperature" id="w-temp">—</div>
+      <div class="description" id="w-desc">Loading...</div>
+      <hr class="divider" />
+      <div class="stat-grid">
+        <div class="stat">
+          <div class="stat-label">💧 Humidity</div>
+          <div class="stat-value" id="w-humidity">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">🍃 Wind</div>
+          <div class="stat-value" id="w-wind">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">🌅 Sunrise</div>
+          <div class="stat-value" id="w-sunrise">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">🌇 Sunset</div>
+          <div class="stat-value" id="w-sunset">—</div>
+        </div>
+      </div>
+      <div class="last-updated" id="w-updated">Not yet loaded</div>
+    </div>
+
   </div>
 
   <script>
+    // ─────────────────────────────────────────────
+    // CHANGE CITY HERE (city name, state code, country code)
+    const CITY = 'Sandy,UT,US';
+    // ─────────────────────────────────────────────
+
+    const API_KEY = '5eddb6335700ca2d008ba45eb170e757';
+
+    // Weather condition code → emoji
+    function weatherEmoji(id) {
+      if (id >= 200 && id < 300) return '⛈️';
+      if (id >= 300 && id < 400) return '🌦️';
+      if (id >= 500 && id < 600) return '🌧️';
+      if (id >= 600 && id < 700) return '❄️';
+      if (id >= 700 && id < 800) return '🌫️';
+      if (id === 800)             return '☀️';
+      if (id === 801)             return '🌤️';
+      if (id === 802)             return '⛅';
+      return '☁️';
+    }
+
+    // Convert Unix UTC timestamp + API timezone offset (seconds) → "h:mm AM/PM"
+    function localTime(unixUtc, tzOffsetSeconds) {
+      const localMs = (unixUtc + tzOffsetSeconds) * 1000;
+      const d = new Date(localMs);
+      let h = d.getUTCHours();
+      const m = String(d.getUTCMinutes()).padStart(2, '0');
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      h = h % 12 || 12;
+      return `${h}:${m} ${ampm}`;
+    }
+
+    async function fetchWeather() {
+      try {
+        const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(CITY)}&appid=${API_KEY}&units=imperial`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`API error ${res.status}`);
+        const d = await res.json();
+
+        const tz = d.timezone; // seconds offset from UTC
+
+        document.getElementById('w-city').textContent    = d.name;
+        document.getElementById('w-icon').textContent    = weatherEmoji(d.weather[0].id);
+        document.getElementById('w-temp').textContent    = `${Math.round(d.main.temp)}°F`;
+        document.getElementById('w-desc').textContent    = d.weather[0].description;
+        document.getElementById('w-humidity').textContent = `${d.main.humidity}%`;
+        document.getElementById('w-wind').textContent    = `${Math.round(d.wind.speed)} mph`;
+        document.getElementById('w-sunrise').textContent = localTime(d.sys.sunrise, tz);
+        document.getElementById('w-sunset').textContent  = localTime(d.sys.sunset, tz);
+
+        const now = new Date();
+        document.getElementById('w-updated').textContent =
+          `Updated ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      } catch (err) {
+        document.getElementById('w-desc').innerHTML =
+          `<span class="weather-error">Couldn't load weather</span>`;
+        console.error(err);
+      }
+    }
+
+    // ── Plant time logic ──
     const plant = document.getElementById('plant');
-    const container = document.getElementById('container');
 
     function getAsset() {
       const hour = new Date().getHours();
-
       if (hour >= 8 && hour < 18) {
-        // 8am–6pm: breathing animation
-        return { src: 'GIF/plant_breathing.gif', type: 'gif' };
+        return 'GIF/plant_breathing.gif';
       } else if ((hour >= 6 && hour < 8) || (hour >= 18 && hour < 20)) {
-        // 6–8am and 6–8pm: yawning
-        return { src: 'PNG/Yawn.png', type: 'png' };
+        return 'PNG/Yawn.png';
       } else {
-        // 8pm–6am: sleeping
-        return { src: 'PNG/Sleep.png', type: 'png' };
+        return 'PNG/Sleep.png';
       }
     }
 
-    function update() {
-      const { src } = getAsset();
-      if (plant.getAttribute('src') !== src) {
-        plant.src = src;
-      }
+    function updatePlant() {
+      const src = getAsset();
+      if (plant.getAttribute('src') !== src) plant.src = src;
     }
 
-    // Enter fullscreen on click
-    container.addEventListener('click', () => {
+    // Fullscreen on click
+    document.getElementById('plant-panel').addEventListener('click', () => {
       if (!document.fullscreenElement) {
         document.documentElement.requestFullscreen();
       } else {
@@ -75,9 +267,15 @@
       }
     });
 
-    // Initial render + check every minute
-    update();
-    setInterval(update, 60 * 1000);
+    // Init
+    updatePlant();
+    fetchWeather();
+
+    // Plant: check every minute
+    setInterval(updatePlant, 60 * 1000);
+
+    // Weather: refresh every hour
+    setInterval(fetchWeather, 60 * 60 * 1000);
   </script>
 </body>
 </html>
