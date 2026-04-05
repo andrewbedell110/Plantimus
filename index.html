@@ -42,13 +42,13 @@
       object-fit: contain;
     }
 
-    /* ── Weather dashboard (right half) ── */
-    #weather-panel {
+    /* ── Shared right-panel styles ── */
+    #weather-panel,
+    #ai-panel {
       width: 50%;
       height: 100%;
       background: linear-gradient(160deg, #e8f5e9 0%, #f1f8e9 100%);
       border-left: 3px solid #a5d6a7;
-      display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
@@ -56,6 +56,10 @@
       gap: 18px;
     }
 
+    #weather-panel { display: flex; }
+    #ai-panel      { display: none; }
+
+    /* ── Weather panel ── */
     .weather-title {
       font-size: 3rem;
       color: #558b2f;
@@ -140,6 +144,94 @@
       color: #c62828;
       text-align: center;
     }
+
+    /* ── AI panel ── */
+    #ai-panel {
+      justify-content: flex-start;
+      gap: 14px;
+    }
+
+    .ai-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-top: 8px;
+    }
+
+    .ai-title {
+      font-size: 2.8rem;
+      color: #558b2f;
+      font-weight: 700;
+    }
+
+    .ai-badge {
+      font-size: 1.6rem;
+      padding: 4px 16px;
+      border-radius: 999px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+
+    .badge-listening { background: #c8e6c9; color: #2e7d32; }
+    .badge-thinking  { background: #fff9c4; color: #f57f17; }
+    .badge-speaking  { background: #bbdefb; color: #1565c0; }
+
+    .ai-status {
+      font-size: 2.2rem;
+      color: #81c784;
+      text-align: center;
+      font-style: italic;
+      min-height: 2.6rem;
+    }
+
+    .ai-transcript {
+      font-size: 2rem;
+      color: #aaa;
+      text-align: center;
+      font-style: italic;
+      min-height: 2.4rem;
+      padding: 0 8px;
+    }
+
+    .ai-response {
+      flex: 1;
+      width: 100%;
+      background: rgba(255,255,255,0.7);
+      border-radius: 16px;
+      padding: 20px 24px;
+      font-size: 2.5rem;
+      color: #1b5e20;
+      line-height: 1.55;
+      overflow-y: auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+    }
+
+    .ai-footer {
+      font-size: 1.8rem;
+      color: #bbb;
+      text-align: center;
+      min-height: 2.2rem;
+      padding-bottom: 8px;
+    }
+
+    /* mic-denied badge sits over weather panel */
+    #mic-badge {
+      display: none;
+      position: fixed;
+      bottom: 12px;
+      right: 12px;
+      background: #ffccbc;
+      color: #bf360c;
+      font-size: 1.6rem;
+      padding: 6px 14px;
+      border-radius: 999px;
+      z-index: 10;
+    }
   </style>
 </head>
 <body>
@@ -179,7 +271,21 @@
       <div class="last-updated" id="w-updated">Not yet loaded</div>
     </div>
 
+    <!-- AI -->
+    <div id="ai-panel">
+      <div class="ai-header">
+        <span class="ai-title">🌿 Ask Plantimus</span>
+        <span class="ai-badge badge-listening" id="ai-badge">Listening</span>
+      </div>
+      <div class="ai-status" id="ai-status">I'm listening...</div>
+      <div class="ai-transcript" id="ai-transcript"></div>
+      <div class="ai-response" id="ai-response"></div>
+      <div class="ai-footer" id="ai-footer"></div>
+    </div>
+
   </div>
+
+  <div id="mic-badge">🎤 Mic needed for voice</div>
 
   <script>
     // ─────────────────────────────────────────────
@@ -187,9 +293,45 @@
     const CITY = 'Sandy,UT,US';
     // ─────────────────────────────────────────────
 
-    const API_KEY = '5eddb6335700ca2d008ba45eb170e757';
+    // ── Constants ──
+    const API_KEY     = '5eddb6335700ca2d008ba45eb170e757';
+    const GEMINI_KEY  = 'AIzaSyD3DCtk-0Qf3wmM03rRTDkifmdkZnM7tF8';
+    const GEMINI_URL  = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`;
+    const SYSTEM_PROMPT = `You are Plantimus, a wise and cheerful houseplant who has absorbed great knowledge from observing the household. You speak warmly, with gentle plant-related metaphors woven naturally into your speech — but you never overdo it. You are helpful, brief, and encouraging. Keep all responses under 3 sentences. Never break character. If asked something you cannot answer, say you are still growing and learning, like a seedling reaching for sunlight. The person you are talking to is your caretaker and dear friend.`;
 
-    // Weather condition code → emoji
+    // Phrases that count as "Hey Plantimus" (covers common mishearings)
+    const WAKE_PHRASES = [
+      'hey plantimus', 'hey plan timus', 'hey planting us',
+      'hey planted us', 'hey planets', 'hey plan thomas',
+      'hey plan tomas', 'hey plantima', 'hey plan time us'
+    ];
+
+    // Return-to-weather countdown (ms after TTS ends)
+    const RETURN_DELAY_MS = 12000;
+    // Hard cap before return regardless of TTS state
+    const RETURN_HARD_CAP_MS = 25000;
+
+    // ── State ──
+    let state = 'IDLE';
+    let returnTimer    = null;
+    let hardCapTimer   = null;
+    let countdownInterval = null;
+    let lastWakeRestartTime = 0;
+    let questionFinalReceived = false;
+    let questionSilenceTimer  = null;
+
+    // ── DOM refs ──
+    const plant         = document.getElementById('plant');
+    const weatherPanel  = document.getElementById('weather-panel');
+    const aiPanel       = document.getElementById('ai-panel');
+    const aiBadge       = document.getElementById('ai-badge');
+    const aiStatus      = document.getElementById('ai-status');
+    const aiTranscript  = document.getElementById('ai-transcript');
+    const aiResponse    = document.getElementById('ai-response');
+    const aiFooter      = document.getElementById('ai-footer');
+    const micBadge      = document.getElementById('mic-badge');
+
+    // ── Weather helpers ──
     function weatherEmoji(id) {
       if (id >= 200 && id < 300) return '⛈️';
       if (id >= 300 && id < 400) return '🌦️';
@@ -202,10 +344,8 @@
       return '☁️';
     }
 
-    // Convert Unix UTC timestamp + API timezone offset (seconds) → "h:mm AM/PM"
     function localTime(unixUtc, tzOffsetSeconds) {
-      const localMs = (unixUtc + tzOffsetSeconds) * 1000;
-      const d = new Date(localMs);
+      const d = new Date((unixUtc + tzOffsetSeconds) * 1000);
       let h = d.getUTCHours();
       const m = String(d.getUTCMinutes()).padStart(2, '0');
       const ampm = h >= 12 ? 'PM' : 'AM';
@@ -219,20 +359,17 @@
         const res = await fetch(url);
         if (!res.ok) throw new Error(`API error ${res.status}`);
         const d = await res.json();
-
-        const tz = d.timezone; // seconds offset from UTC
-
-        document.getElementById('w-city').textContent    = d.name;
-        document.getElementById('w-icon').textContent    = weatherEmoji(d.weather[0].id);
-        document.getElementById('w-temp').textContent    = `${Math.round(d.main.temp)}°F`;
-        document.getElementById('w-desc').textContent    = d.weather[0].description;
-        document.getElementById('w-humidity').textContent = `${d.main.humidity}%`;
-        document.getElementById('w-wind').textContent    = `${Math.round(d.wind.speed)} mph`;
-        document.getElementById('w-sunrise').textContent = localTime(d.sys.sunrise, tz);
-        document.getElementById('w-sunset').textContent  = localTime(d.sys.sunset, tz);
-
+        const tz = d.timezone;
+        document.getElementById('w-city').textContent      = d.name;
+        document.getElementById('w-icon').textContent      = weatherEmoji(d.weather[0].id);
+        document.getElementById('w-temp').textContent      = `${Math.round(d.main.temp)}°F`;
+        document.getElementById('w-desc').textContent      = d.weather[0].description;
+        document.getElementById('w-humidity').textContent  = `${d.main.humidity}%`;
+        document.getElementById('w-wind').textContent      = `${Math.round(d.wind.speed)} mph`;
+        document.getElementById('w-sunrise').textContent   = localTime(d.sys.sunrise, tz);
+        document.getElementById('w-sunset').textContent    = localTime(d.sys.sunset, tz);
         const now = new Date();
-        document.getElementById('w-updated').textContent =
+        document.getElementById('w-updated').textContent   =
           `Updated ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
       } catch (err) {
         document.getElementById('w-desc').innerHTML =
@@ -241,26 +378,301 @@
       }
     }
 
-    // ── Plant time logic ──
-    const plant = document.getElementById('plant');
-
-    function getAsset() {
-      const hour = new Date().getHours();
-      if (hour >= 8 && hour < 18) {
-        return 'GIF/plant_breathing.gif';
-      } else if ((hour >= 6 && hour < 8) || (hour >= 18 && hour < 20)) {
-        return 'PNG/Yawn.png';
-      } else {
-        return 'PNG/Sleep.png';
-      }
+    // ── Plant image ──
+    function getTimeAsset() {
+      const h = new Date().getHours();
+      if (h >= 8 && h < 18)                             return 'GIF/plant_breathing.gif';
+      if ((h >= 6 && h < 8) || (h >= 18 && h < 20))    return 'PNG/Yawn.png';
+      return 'PNG/Sleep.png';
     }
 
-    function updatePlant() {
-      const src = getAsset();
+    function setPlant(src) {
       if (plant.getAttribute('src') !== src) plant.src = src;
     }
 
-    // Fullscreen on click
+    function updatePlant() {
+      if (state === 'IDLE') setPlant(getTimeAsset());
+    }
+
+    // ── UI helpers ──
+    function showAiPanel() {
+      weatherPanel.style.display = 'none';
+      aiPanel.style.display      = 'flex';
+    }
+
+    function hideAiPanel() {
+      aiPanel.style.display      = 'none';
+      weatherPanel.style.display = 'flex';
+    }
+
+    function setBadge(type) {
+      aiBadge.className = `ai-badge badge-${type}`;
+      aiBadge.textContent = type.charAt(0).toUpperCase() + type.slice(1);
+    }
+
+    // ── State transitions ──
+    function enterIdle() {
+      state = 'IDLE';
+      hideAiPanel();
+      setPlant(getTimeAsset());
+      clearAllTimers();
+      startWakeWordRecognizer();
+    }
+
+    function enterTriggered() {
+      state = 'TRIGGERED';
+      showAiPanel();
+      setPlant('PNG/Talk.png');
+      setBadge('listening');
+      aiStatus.textContent     = "I'm listening...";
+      aiTranscript.textContent = '';
+      aiResponse.textContent   = '';
+      aiFooter.textContent     = '';
+      wakeRecognizer.abort();
+      startQuestionRecognizer();
+    }
+
+    function enterListening() {
+      state = 'LISTENING';
+      // already showing Talk.png and listening badge
+    }
+
+    function enterProcessing(question) {
+      state = 'PROCESSING';
+      setPlant('PNG/Idea.png');
+      setBadge('thinking');
+      aiStatus.textContent     = 'Hmm, let me think...';
+      aiTranscript.textContent = `"${question}"`;
+      aiResponse.textContent   = '';
+      aiFooter.textContent     = '';
+      askGemini(question);
+    }
+
+    function enterResponding(text) {
+      state = 'RESPONDING';
+      setPlant('PNG/Talk.png');
+      setBadge('speaking');
+      aiStatus.textContent     = 'Plantimus says...';
+      aiTranscript.textContent = '';
+      aiResponse.textContent   = '';
+      aiFooter.textContent     = '';
+
+      // Typewriter + TTS simultaneously
+      typewriterEffect(text, aiResponse, 30, () => {
+        // typing done; TTS may still be going
+      });
+      speakText(text, () => {
+        startReturnCountdown();
+      });
+
+      // Hard cap in case TTS onend never fires
+      hardCapTimer = setTimeout(enterReturning, RETURN_HARD_CAP_MS);
+    }
+
+    function enterReturning() {
+      if (state === 'RETURNING' || state === 'IDLE') return;
+      state = 'RETURNING';
+      clearAllTimers();
+      speechSynthesis.cancel();
+      enterIdle();
+    }
+
+    function enterError(msg) {
+      state = 'RESPONDING'; // reuse responding state for auto-return
+      setPlant('PNG/Wilt.png');
+      setBadge('speaking');
+      aiStatus.textContent   = '';
+      aiResponse.textContent = msg;
+      aiFooter.textContent   = '';
+      returnTimer = setTimeout(enterReturning, 5000);
+    }
+
+    function clearAllTimers() {
+      clearTimeout(returnTimer);
+      clearTimeout(hardCapTimer);
+      clearTimeout(questionSilenceTimer);
+      clearInterval(countdownInterval);
+      returnTimer = hardCapTimer = questionSilenceTimer = countdownInterval = null;
+    }
+
+    // ── Typewriter effect ──
+    function typewriterEffect(text, el, msPerChar, onDone) {
+      el.textContent = '';
+      let i = 0;
+      function tick() {
+        if (i < text.length) {
+          el.textContent += text[i++];
+          setTimeout(tick, msPerChar);
+        } else if (onDone) {
+          onDone();
+        }
+      }
+      tick();
+    }
+
+    // ── Return countdown ──
+    function startReturnCountdown() {
+      let remaining = Math.round(RETURN_DELAY_MS / 1000);
+      aiFooter.textContent = `Returning to weather in ${remaining}...`;
+      countdownInterval = setInterval(() => {
+        remaining--;
+        if (remaining > 0) {
+          aiFooter.textContent = `Returning to weather in ${remaining}...`;
+        } else {
+          clearInterval(countdownInterval);
+        }
+      }, 1000);
+      returnTimer = setTimeout(enterReturning, RETURN_DELAY_MS);
+    }
+
+    // ── Speech Synthesis ──
+    function speakText(text, onDone) {
+      speechSynthesis.cancel();
+      const utterance        = new SpeechSynthesisUtterance(text);
+      utterance.rate         = 0.95;
+      utterance.pitch        = 1.1;
+      utterance.volume       = 1.0;
+      utterance.onend        = () => { if (state === 'RESPONDING') onDone(); };
+      utterance.onerror      = () => { if (state === 'RESPONDING') onDone(); };
+      speechSynthesis.speak(utterance);
+    }
+
+    // ── Gemini API ──
+    async function askGemini(question) {
+      try {
+        const body = {
+          system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          contents: [{ role: 'user', parts: [{ text: question }] }],
+          generationConfig: { maxOutputTokens: 200, temperature: 0.8 }
+        };
+        const res  = await fetch(GEMINI_URL, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify(body)
+        });
+        if (!res.ok) throw new Error(`Gemini error ${res.status}`);
+        const data = await res.json();
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!text) throw new Error('Empty Gemini response');
+        if (state === 'PROCESSING') enterResponding(text);
+      } catch (err) {
+        console.error(err);
+        if (state === 'PROCESSING') {
+          enterError("My leaves are a little wilted right now — try again in a moment! 🌿");
+        }
+      }
+    }
+
+    // ── Wake phrase detection ──
+    function isWakePhrase(transcript) {
+      const t = transcript.toLowerCase().trim();
+      return WAKE_PHRASES.some(p => t.includes(p));
+    }
+
+    // Early-return phrases (detected while in RESPONDING)
+    function isDismissPhrase(transcript) {
+      const t = transcript.toLowerCase().trim();
+      return ['bye', 'goodbye', 'thank you', 'thanks'].some(p => t.includes(p));
+    }
+
+    // ── Wake word recognizer (always-on) ──
+    let wakeRecognizer = null;
+
+    function startWakeWordRecognizer() {
+      if (!('SpeechRecognition' in window) && !('webkitSpeechRecognition' in window)) {
+        console.warn('SpeechRecognition not supported');
+        return;
+      }
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      wakeRecognizer = new SpeechRecognition();
+      wakeRecognizer.continuous      = true;
+      wakeRecognizer.interimResults  = false;
+      wakeRecognizer.lang            = 'en-US';
+
+      wakeRecognizer.onresult = (e) => {
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const transcript = e.results[i][0].transcript;
+          console.log('[wake]', transcript);
+          if (state === 'IDLE' && isWakePhrase(transcript)) {
+            enterTriggered();
+            return;
+          }
+          if (state === 'RESPONDING' && isDismissPhrase(transcript)) {
+            enterReturning();
+            return;
+          }
+        }
+      };
+
+      wakeRecognizer.onerror = (e) => {
+        if (e.error === 'not-allowed') {
+          micBadge.style.display = 'block';
+        }
+        console.warn('[wake error]', e.error);
+      };
+
+      wakeRecognizer.onend = () => {
+        // Auto-restart unless we intentionally aborted (state !== IDLE)
+        if (state === 'IDLE') {
+          const now = Date.now();
+          const delay = (now - lastWakeRestartTime < 2000) ? 1000 : 0;
+          lastWakeRestartTime = now;
+          setTimeout(() => {
+            if (state === 'IDLE') {
+              try { wakeRecognizer.start(); } catch (_) {}
+            }
+          }, delay);
+        }
+      };
+
+      try { wakeRecognizer.start(); } catch (_) {}
+    }
+
+    // ── Question recognizer (single-shot) ──
+    function startQuestionRecognizer() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const qr = new SpeechRecognition();
+      qr.continuous     = false;
+      qr.interimResults = true;
+      qr.lang           = 'en-US';
+
+      questionFinalReceived = false;
+
+      // Silence fallback — if nothing final in 7s, abort
+      questionSilenceTimer = setTimeout(() => {
+        if (!questionFinalReceived) {
+          qr.abort();
+          enterIdle();
+        }
+      }, 7000);
+
+      qr.onresult = (e) => {
+        let interim = '', final = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          if (e.results[i].isFinal) {
+            final += e.results[i][0].transcript;
+          } else {
+            interim += e.results[i][0].transcript;
+          }
+        }
+        if (interim) aiTranscript.textContent = interim;
+        if (final) {
+          questionFinalReceived = true;
+          clearTimeout(questionSilenceTimer);
+          enterProcessing(final.trim());
+        }
+      };
+
+      qr.onstart  = () => enterListening();
+      qr.onerror  = (e) => { console.warn('[question error]', e.error); enterIdle(); };
+      qr.onend    = () => {
+        if (!questionFinalReceived) enterIdle();
+      };
+
+      try { qr.start(); } catch (_) { enterIdle(); }
+    }
+
+    // ── Fullscreen on plant click ──
     document.getElementById('plant-panel').addEventListener('click', () => {
       if (!document.fullscreenElement) {
         document.documentElement.requestFullscreen();
@@ -269,15 +681,12 @@
       }
     });
 
-    // Init
+    // ── Init ──
     updatePlant();
     fetchWeather();
-
-    // Plant: check every minute
     setInterval(updatePlant, 60 * 1000);
-
-    // Weather: refresh every hour
     setInterval(fetchWeather, 60 * 60 * 1000);
+    startWakeWordRecognizer();
   </script>
 </body>
 </html>
