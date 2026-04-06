@@ -441,6 +441,7 @@
     }
 
     function enterProcessing(question) {
+      if (state !== 'TRIGGERED' && state !== 'LISTENING') return;
       state = 'PROCESSING';
       setPlant('PNG/Idea.png');
       setBadge('thinking');
@@ -671,9 +672,10 @@
           }
         }
         if (interim) aiTranscript.textContent = interim;
-        if (final) {
+        if (final && !questionFinalReceived) {
           questionFinalReceived = true;
           clearTimeout(questionSilenceTimer);
+          qr.abort();
           enterProcessing(final.trim());
         }
       };
