@@ -83,7 +83,7 @@ function updatePlant() {
 }
 
 // ── Gemini API ──
-async function sendMessage() {
+window.sendMessage = async function sendMessage() {
   const input = document.getElementById('chat-input');
   const userText = input.value.trim();
   if (!userText) return;
