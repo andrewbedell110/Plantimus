@@ -4,50 +4,22 @@ const CITY = 'Sandy,UT,US';
 // ─────────────────────────────────────────────
 
 // ── Constants ──
-const API_KEY     = '5eddb6335700ca2d008ba45eb170e757';
-// Break the key into pieces to bypass basic automated web scanners.
+const API_KEY      = '5eddb6335700ca2d008ba45eb170e757';
 const _gk1 = 'AIza';
 const _gk2 = 'SyD3DCtk-0Qf3';
 const _gk3 = 'wmM03rRTDkifmdkZnM7tF8';
-const GEMINI_KEY  = _gk1 + _gk2 + _gk3;
+const GEMINI_KEY   = _gk1 + _gk2 + _gk3;
 const GEMINI_MODEL = 'gemini-2.5-flash';
 const SYSTEM_PROMPT = `You are Plantimus, a wise and cheerful houseplant who has absorbed great knowledge from observing the household. You speak warmly, with gentle plant-related metaphors woven naturally into your speech — but you never overdo it. You are helpful, brief, and encouraging. Keep all responses under 3 sentences. Never break character. If asked something you cannot answer, say you are still growing and learning, like a seedling reaching for sunlight. The person you are talking to is your caretaker and dear friend.`;
 
-// Phrases that count as "Hey Plantimus" (covers common mishearings)
-const WAKE_PHRASES = [
-  'hey plantimus', 'hey plan timus', 'hey planting us',
-  'hey planted us', 'hey planets', 'hey plan thomas',
-  'hey plan tomas', 'hey plantima', 'hey plan time us',
-  'hey plans', 'eggplantimus', 'hay plantimus',
-  'a plan to miss', 'hay plans', 'he plantimus'
-];
-
-// Return-to-weather countdown (ms after TTS ends)
-const RETURN_DELAY_MS = 12000;
-// Hard cap before return regardless of TTS state
-const RETURN_HARD_CAP_MS = 25000;
-
-// ── State ──
-let state = 'IDLE';
-let lastTriggerTime = 0;
-const TRIGGER_COOLDOWN_MS = 30000; // prevent rapid re-triggers
-let returnTimer    = null;
-let hardCapTimer   = null;
-let countdownInterval = null;
-let lastWakeRestartTime = 0;
-let questionFinalReceived = false;
-let questionSilenceTimer  = null;
-
-// ── DOM refs ──
-const plant         = document.getElementById('plant');
-const weatherPanel  = document.getElementById('weather-panel');
-const aiPanel       = document.getElementById('ai-panel');
-const aiBadge       = document.getElementById('ai-badge');
-const aiStatus      = document.getElementById('ai-status');
-const aiTranscript  = document.getElementById('ai-transcript');
-const aiResponse    = document.getElementById('ai-response');
-const aiFooter      = document.getElementById('ai-footer');
-const micBadge      = document.getElementById('mic-badge');
+// ── Wake phrases (commented out for testing) ──
+// const WAKE_PHRASES = [
+//   'hey plantimus', 'hey plan timus', 'hey planting us',
+//   'hey planted us', 'hey planets', 'hey plan thomas',
+//   'hey plan tomas', 'hey plantima', 'hey plan time us',
+//   'hey plans', 'eggplantimus', 'hay plantimus',
+//   'a plan to miss', 'hay plans', 'he plantimus'
+// ];
 
 // ── Weather helpers ──
 function weatherEmoji(id) {
@@ -104,303 +76,67 @@ function getTimeAsset() {
   return 'PNG/Sleep.png';
 }
 
-function setPlant(src) {
+const plant = document.getElementById('plant');
+function updatePlant() {
+  const src = getTimeAsset();
   if (plant.getAttribute('src') !== src) plant.src = src;
 }
 
-function updatePlant() {
-  if (state === 'IDLE') setPlant(getTimeAsset());
-}
-
-// ── UI helpers ──
-function showAiPanel() {
-  weatherPanel.style.display = 'none';
-  aiPanel.style.display      = 'flex';
-}
-
-function hideAiPanel() {
-  aiPanel.style.display      = 'none';
-  weatherPanel.style.display = 'flex';
-}
-
-function setBadge(type) {
-  aiBadge.className = `ai-badge badge-${type}`;
-  aiBadge.textContent = type.charAt(0).toUpperCase() + type.slice(1);
-}
-
-// ── State transitions ──
-function enterIdle() {
-  state = 'IDLE';
-  hideAiPanel();
-  setPlant(getTimeAsset());
-  clearAllTimers();
-  startWakeWordRecognizer();
-}
-
-function enterTriggered() {
-  state = 'TRIGGERED';
-  showAiPanel();
-  setPlant('PNG/Talk.png');
-  setBadge('listening');
-  aiStatus.textContent     = "I'm listening...";
-  aiTranscript.textContent = '';
-  aiResponse.textContent   = '';
-  aiFooter.textContent     = '';
-  wakeRecognizer.abort();
-  startQuestionRecognizer();
-}
-
-function enterListening() {
-  state = 'LISTENING';
-  // already showing Talk.png and listening badge
-}
-
-function enterProcessing(question) {
-  if (state !== 'TRIGGERED' && state !== 'LISTENING') return;
-  state = 'PROCESSING';
-  setPlant('PNG/Idea.png');
-  setBadge('thinking');
-  aiStatus.textContent     = 'Hmm, let me think...';
-  aiTranscript.textContent = `"${question}"`;
-  aiResponse.textContent   = '';
-  aiFooter.textContent     = '';
-  askGemini(question);
-}
-
-function enterResponding(text) {
-  state = 'RESPONDING';
-  setPlant('PNG/Talk.png');
-  setBadge('speaking');
-  aiStatus.textContent     = 'Plantimus says...';
-  aiTranscript.textContent = '';
-  aiResponse.textContent   = '';
-  aiFooter.textContent     = '';
-
-  // Typewriter + TTS simultaneously
-  typewriterEffect(text, aiResponse, 30, () => {
-    // typing done; TTS may still be going
-  });
-  speakText(text, () => {
-    startReturnCountdown();
-  });
-
-  // Hard cap in case TTS onend never fires
-  hardCapTimer = setTimeout(enterReturning, RETURN_HARD_CAP_MS);
-}
-
-function enterReturning() {
-  if (state === 'RETURNING' || state === 'IDLE') return;
-  state = 'RETURNING';
-  clearAllTimers();
-  speechSynthesis.cancel();
-  enterIdle();
-}
-
-function enterError(msg) {
-  state = 'RESPONDING'; // reuse responding state for auto-return
-  setPlant('PNG/Wilt.png');
-  setBadge('speaking');
-  aiStatus.textContent   = '';
-  aiResponse.textContent = msg;
-  aiFooter.textContent   = '';
-  returnTimer = setTimeout(enterReturning, 5000);
-}
-
-function clearAllTimers() {
-  clearTimeout(returnTimer);
-  clearTimeout(hardCapTimer);
-  clearTimeout(questionSilenceTimer);
-  clearInterval(countdownInterval);
-  returnTimer = hardCapTimer = questionSilenceTimer = countdownInterval = null;
-}
-
-// ── Typewriter effect ──
-function typewriterEffect(text, el, msPerChar, onDone) {
-  el.textContent = '';
-  let i = 0;
-  function tick() {
-    if (i < text.length) {
-      el.textContent += text[i++];
-      setTimeout(tick, msPerChar);
-    } else if (onDone) {
-      onDone();
-    }
-  }
-  tick();
-}
-
-// ── Return countdown ──
-function startReturnCountdown() {
-  let remaining = Math.round(RETURN_DELAY_MS / 1000);
-  aiFooter.textContent = `Returning to weather in ${remaining}...`;
-  countdownInterval = setInterval(() => {
-    remaining--;
-    if (remaining > 0) {
-      aiFooter.textContent = `Returning to weather in ${remaining}...`;
-    } else {
-      clearInterval(countdownInterval);
-    }
-  }, 1000);
-  returnTimer = setTimeout(enterReturning, RETURN_DELAY_MS);
-}
-
-// ── Speech Synthesis ──
-function speakText(text, onDone) {
-  speechSynthesis.cancel();
-  const utterance        = new SpeechSynthesisUtterance(text);
-  utterance.rate         = 0.95;
-  utterance.pitch        = 1.1;
-  utterance.volume       = 1.0;
-  utterance.onend        = () => { if (state === 'RESPONDING') onDone(); };
-  utterance.onerror      = () => { if (state === 'RESPONDING') onDone(); };
-  speechSynthesis.speak(utterance);
-}
-
 // ── Gemini API ──
-async function askGemini(question) {
+async function sendMessage() {
+  const input = document.getElementById('chat-input');
+  const userText = input.value.trim();
+  if (!userText) return;
+
+  addMessage(userText, 'user');
+  input.value = '';
+
   try {
-    const body = {
-      contents: [{
-        role: 'user',
-        parts: [{ text: `${SYSTEM_PROMPT} User says: ${question}` }]
-      }]
-    };
-    const res  = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`, {
-      method:  'POST',
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`, {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(body)
+      body: JSON.stringify({
+        contents: [{
+          role: 'user',
+          parts: [{ text: `${SYSTEM_PROMPT} User says: ${userText}` }]
+        }]
+      })
     });
-    if (!res.ok) throw new Error(`Gemini error ${res.status}`);
-    const data = await res.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error('Empty Gemini response');
-    if (state === 'PROCESSING') enterResponding(text);
+
+    const data = await response.json();
+
+    if (data.error) {
+      console.error('API Error:', data.error);
+      addMessage(`Error: ${data.error.message}`, 'bot');
+      return;
+    }
+
+    const botResponse = data.candidates[0].content.parts[0].text;
+    addMessage(botResponse, 'bot');
   } catch (err) {
+    addMessage('Network error — check console.', 'bot');
     console.error(err);
-    if (state === 'PROCESSING') {
-      const msg = err.message.includes('429')
-        ? "I've been chatting too much — give me a moment to catch my breath! 🌿"
-        : "My leaves are a little wilted right now — try again in a moment! 🌿";
-      enterError(msg);
-    }
   }
 }
 
-// ── Wake phrase detection ──
-function isWakePhrase(transcript) {
-  const t = transcript.toLowerCase().trim();
-  return WAKE_PHRASES.some(p => t.includes(p));
+function addMessage(text, sender) {
+  const messages = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.classList.add('chat-msg', sender);
+  div.innerText = text;
+  messages.appendChild(div);
+  messages.scrollTop = messages.scrollHeight;
 }
 
-// Early-return phrases (detected while in RESPONDING)
-function isDismissPhrase(transcript) {
-  const t = transcript.toLowerCase().trim();
-  return ['bye', 'goodbye', 'thank you', 'thanks'].some(p => t.includes(p));
-}
+// Allow Enter key to send
+document.getElementById('chat-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') sendMessage();
+});
 
-// ── Wake word recognizer (always-on) ──
-let wakeRecognizer = null;
-
-function startWakeWordRecognizer() {
-  if (!('SpeechRecognition' in window) && !('webkitSpeechRecognition' in window)) {
-    console.warn('SpeechRecognition not supported');
-    return;
-  }
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  wakeRecognizer = new SpeechRecognition();
-  wakeRecognizer.continuous      = true;
-  wakeRecognizer.interimResults  = false;
-  wakeRecognizer.lang            = 'en-US';
-
-  wakeRecognizer.onresult = (e) => {
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      const transcript = e.results[i][0].transcript;
-      console.log('[wake]', transcript);
-      if (state === 'IDLE' && isWakePhrase(transcript)) {
-        const now = Date.now();
-        if (now - lastTriggerTime < TRIGGER_COOLDOWN_MS) {
-          console.log('[wake] cooldown active, ignoring trigger');
-          return;
-        }
-        lastTriggerTime = now;
-        enterTriggered();
-        return;
-      }
-      if (state === 'RESPONDING' && isDismissPhrase(transcript)) {
-        enterReturning();
-        return;
-      }
-    }
-  };
-
-  wakeRecognizer.onerror = (e) => {
-    if (e.error === 'not-allowed') {
-      micBadge.style.display = 'block';
-    }
-    console.warn('[wake error]', e.error);
-  };
-
-  wakeRecognizer.onend = () => {
-    // Auto-restart unless we intentionally aborted (state !== IDLE)
-    if (state === 'IDLE') {
-      const now = Date.now();
-      const delay = (now - lastWakeRestartTime < 2000) ? 1000 : 0;
-      lastWakeRestartTime = now;
-      setTimeout(() => {
-        if (state === 'IDLE') {
-          try { wakeRecognizer.start(); } catch (_) {}
-        }
-      }, delay);
-    }
-  };
-
-  try { wakeRecognizer.start(); } catch (_) {}
-}
-
-// ── Question recognizer (single-shot) ──
-function startQuestionRecognizer() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const qr = new SpeechRecognition();
-  qr.continuous     = false;
-  qr.interimResults = true;
-  qr.lang           = 'en-US';
-
-  questionFinalReceived = false;
-
-  // Silence fallback — if nothing final in 7s, abort
-  questionSilenceTimer = setTimeout(() => {
-    if (!questionFinalReceived) {
-      qr.abort();
-      enterIdle();
-    }
-  }, 7000);
-
-  qr.onresult = (e) => {
-    let interim = '', final = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      if (e.results[i].isFinal) {
-        final += e.results[i][0].transcript;
-      } else {
-        interim += e.results[i][0].transcript;
-      }
-    }
-    if (interim) aiTranscript.textContent = interim;
-    if (final && !questionFinalReceived) {
-      questionFinalReceived = true;
-      clearTimeout(questionSilenceTimer);
-      qr.abort();
-      enterProcessing(final.trim());
-    }
-  };
-
-  qr.onstart  = () => enterListening();
-  qr.onerror  = (e) => { console.warn('[question error]', e.error); enterIdle(); };
-  qr.onend    = () => {
-    if (!questionFinalReceived) enterIdle();
-  };
-
-  try { qr.start(); } catch (_) { enterIdle(); }
-}
+// ── Voice / wake word (commented out for testing) ──
+// function startWakeWordRecognizer() { ... }
+// function startQuestionRecognizer() { ... }
+// function speakText(text, onDone) { ... }
 
 // ── Fullscreen on plant click ──
 document.getElementById('plant-panel').addEventListener('click', () => {
@@ -416,4 +152,4 @@ updatePlant();
 fetchWeather();
 setInterval(updatePlant, 60 * 1000);
 setInterval(fetchWeather, 60 * 60 * 1000);
-startWakeWordRecognizer();
+// startWakeWordRecognizer();
