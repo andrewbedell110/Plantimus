@@ -260,9 +260,10 @@ function speakText(text, onDone) {
 async function askGemini(question) {
   try {
     const body = {
-      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-      contents: [{ role: 'user', parts: [{ text: question }] }],
-      generationConfig: { maxOutputTokens: 200, temperature: 0.8 }
+      contents: [{
+        role: 'user',
+        parts: [{ text: `${SYSTEM_PROMPT} User says: ${question}` }]
+      }]
     };
     const res  = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`, {
       method:  'POST',
